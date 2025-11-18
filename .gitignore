@@ -1,0 +1,39 @@
+# Python virtual environment
+myenv/
+*.pyc
+__pycache__/
+
+# Environment configuration
+.env
+.env.*
+
+# Node.js or frontend build artifacts (if applicable)
+node_modules/
+*.log
+dist/
+build/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# VS Code settings
+.vscode/
+
+# Shell scripts and generated logs
+*.sh
+*.log
+
+# Frontend cache or temp files
+4_FRONTEND/**/css/*.map
+4_FRONTEND/**/js/*.map
+
+# Database dumps or temp files
+*.sqlite3
+*.db
+*.sql
+
+# Docs and generated summaries
+5_DOCS/*.log
+5_DOCS/*.tmp
+
