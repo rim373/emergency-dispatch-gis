@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Service Dashboard - Emergency Response</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            min-height: 100vh;
+        }
+        
+        .header {
+            background: white;
+            padding: 15px 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .header h1 {
+            font-size: 1.3em;
+            color: #333;
+        }
+        
+        .header-info {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .service-badge {
+            background: #e3f2fd;
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 0.85em;
+            color: #1976d2;
+        }
+        
+        .connection-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #f44336;
+        }
+        
+        .connection-dot.connected {
+            background: #4caf50;
+        }
+        
+        .btn-logout {
+            background: none;
+            border: 1px solid #ddd;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85em;
+        }
+        
+        .btn-logout:hover {
+            background: #f5f5f5;
+        }
+        
+        .main-container {
+            display: grid;
+            grid-template-columns: 1fr 450px;
+            height: calc(100vh - 60px);
+        }
+        
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+        
+        .sidebar {
+            background: white;
+            border-left: 1px solid #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        .stats-bar {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            padding: 15px;
+            background: #fafafa;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        .stat-item {
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .stat-label {
+            font-size: 0.75em;
+            color: #666;
+            text-transform: uppercase;
+        }
+        
+        .requests-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 15px;
+        }
+        
+        .section-title {
+            font-size: 0.85em;
+            color: #666;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        .request-card {
+            background: #f5f5f5;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-left: 4px solid #ff9800;
+        }
+        
+        .request-card.validated {
+            border-left-color: #4caf50;
+            background: #e8f5e9;
+        }
+        
+        .request-card.canceled {
+            border-left-color: #9e9e9e;
+            background: #fafafa;
+            opacity: 0.7;
+        }
+        
+        .request-card.refused {
+            border-left-color: #f44336;
+            background: #ffebee;
+            opacity: 0.7;
+        }
+        
+        .request-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 10px;
+        }
+        
+        .request-type {
+            font-weight: 600;
+            font-size: 1.1em;
+        }
+        
+        .request-status {
+            font-size: 0.75em;
+            padding: 3px 8px;
+            border-radius: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        
+        .request-status.pending {
+            background: #fff3e0;
+            color: #e65100;
+        }
+        
+        .request-status.validated {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+        
+        .request-status.canceled {
+            background: #f5f5f5;
+            color: #666;
+        }
+        
+        .request-status.refused {
+            background: #ffebee;
+            color: #c62828;
+        }
+        
+        .request-details {
+            font-size: 0.85em;
+            color: #666;
+            margin-bottom: 10px;
+        }
+        
+        .request-details p {
+            margin: 4px 0;
+        }
+        
+        .location-box {
+            background: #e3f2fd;
+            padding: 8px;
+            border-radius: 6px;
+            margin: 8px 0;
+        }
+        
+        .location-box .label {
+            font-weight: 600;
+            color: #1976d2;
+            font-size: 0.8em;
+            margin-bottom: 4px;
+        }
+        
+        .location-box .coords {
+            font-family: monospace;
+            font-size: 0.85em;
+            color: #333;
+        }
+        
+        .location-box .address {
+            font-size: 0.8em;
+            color: #666;
+            margin-top: 4px;
+            line-height: 1.3;
+        }
+        
+        .request-actions {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .btn-action {
+            flex: 1;
+            padding: 8px;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.85em;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        
+        .btn-accept {
+            background: #4caf50;
+            color: white;
+        }
+        
+        .btn-accept:hover {
+            background: #388e3c;
+        }
+        
+        .btn-refuse {
+            background: #f44336;
+            color: white;
+        }
+        
+        .btn-refuse:hover {
+            background: #d32f2f;
+        }
+        
+        .no-requests {
+            text-align: center;
+            color: #999;
+            padding: 40px 20px;
+        }
+        
+        .no-requests .icon {
+            font-size: 3em;
+            margin-bottom: 10px;
+        }
+        
+        @media (max-width: 900px) {
+            .main-container {
+                grid-template-columns: 1fr;
+                grid-template-rows: 40vh 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🚨 Emergency Response Dashboard</h1>
+        <div class="header-info">
+            <span class="service-badge" id="serviceBadge">Loading...</span>
+            <div class="connection-dot" id="connectionDot" title="Connection status"></div>
+            <button class="btn-logout" onclick="logout()">Logout</button>
+        </div>
+    </div>
+    
+    <div class="main-container">
+        <div id="map"></div>
+        
+        <div class="sidebar">
+            <div class="stats-bar">
+                <div class="stat-item">
+                    <div class="stat-value" id="pendingCount">0</div>
+                    <div class="stat-label">Pending</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="validatedCount">0</div>
+                    <div class="stat-label">Validated</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="totalCount">0</div>
+                    <div class="stat-label">Total</div>
+                </div>
+            </div>
+            
+            <div class="requests-container">
+                <div class="section-title">📋 Emergency Requests</div>
+                <div id="requestsList">
+                    <div class="no-requests">
+                        <div class="icon">📭</div>
+                        <p>No requests yet</p>
+                        <p style="font-size: 0.85em; margin-top: 5px;">Waiting for emergency calls...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+    <script>
+        const API_URL = 'http://localhost:8000';
+        const WS_URL = 'http://localhost:8000';
+        
+        // Check auth
+        const token = localStorage.getItem('token');
+        const serviceId = localStorage.getItem('serviceId');
+        const serviceName = localStorage.getItem('serviceName');
+        const serviceType = localStorage.getItem('serviceType');
+        
+        if (!token) {
+            window.location.href = 'login.html';
+        }
+        
+        document.getElementById('serviceBadge').textContent = serviceName || 'Service';
+        
+        let map, socket;
+        let requests = {};
+        let requestMarkers = {};
+        
+        // Initialize map
+        function initMap() {
+            map = L.map('map').setView([34.0522, -118.2437], 11);
+            
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap'
+            }).addTo(map);
+        }
+        
+        // Connect WebSocket
+        function connectWebSocket() {
+            socket = io(WS_URL);
+            
+            socket.on('connect', () => {
+                document.getElementById('connectionDot').classList.add('connected');
+                
+                socket.emit('register_service', {
+                    service_id: serviceId,
+                    service_type: serviceType
+                });
+            });
+            
+            socket.on('disconnect', () => {
+                document.getElementById('connectionDot').classList.remove('connected');
+            });
+            
+            // New request received
+            socket.on('new_emergency_request', (data) => {
+                console.log('New request:', data);
+                
+                requests[data.request_id] = {
+                    ...data,
+                    status: 'pending',
+                    myResponse: null
+                };
+                
+                addRequestMarker(data);
+                renderRequests();
+            });
+            
+            // Request assigned to me
+            socket.on('request_assigned_to_you', (data) => {
+                console.log('Assigned to me:', data);
+                
+                if (requests[data.request_id]) {
+                    requests[data.request_id].status = 'validated';
+                    requests[data.request_id].message = data.message;
+                    renderRequests();
+                }
+            });
+            
+            // Request assigned to another service
+            socket.on('request_assigned_to_other', (data) => {
+                console.log('Assigned to other:', data);
+                
+                if (requests[data.request_id]) {
+                    requests[data.request_id].status = 'canceled';
+                    requests[data.request_id].message = `Assigned to: ${data.assigned_to}`;
+                    renderRequests();
+                }
+            });
+        }
+        
+        // Add marker for request
+        function addRequestMarker(request) {
+            const lat = request.location.latitude;
+            const lng = request.location.longitude;
+            
+            const marker = L.marker([lat, lng], {
+                icon: L.divIcon({
+                    className: 'request-marker',
+                    html: `<div style="background:#f44336;color:white;padding:5px 8px;border-radius:5px;font-size:11px;font-weight:bold;">🆘 ${request.request_type.toUpperCase()}</div>`,
+                    iconAnchor: [0, 0]
+                })
+            }).addTo(map);
+            
+            marker.bindPopup(`
+                <strong>${request.request_type.toUpperCase()}</strong><br>
+                ID: ${request.request_id}<br>
+                Location: ${lat.toFixed(4)}, ${lng.toFixed(4)}<br>
+                ${request.location.address ? `Address: ${request.location.address.substring(0, 50)}...` : ''}
+            `);
+            
+            requestMarkers[request.request_id] = marker;
+            
+            // Center map on new request
+            map.setView([lat, lng], 13);
+        }
+        
+        // Render requests list
+        function renderRequests() {
+            const container = document.getElementById('requestsList');
+            const requestArray = Object.values(requests);
+            
+            // Update stats
+            const pending = requestArray.filter(r => r.status === 'pending').length;
+            const validated = requestArray.filter(r => r.status === 'validated').length;
+            
+            document.getElementById('pendingCount').textContent = pending;
+            document.getElementById('validatedCount').textContent = validated;
+            document.getElementById('totalCount').textContent = requestArray.length;
+            
+            if (requestArray.length === 0) {
+                container.innerHTML = `
+                    <div class="no-requests">
+                        <div class="icon">📭</div>
+                        <p>No requests yet</p>
+                        <p style="font-size: 0.85em; margin-top: 5px;">Waiting for emergency calls...</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            // Sort: pending first, then by time
+            requestArray.sort((a, b) => {
+                if (a.status === 'pending' && b.status !== 'pending') return -1;
+                if (a.status !== 'pending' && b.status === 'pending') return 1;
+                return new Date(b.created_at) - new Date(a.created_at);
+            });
+            
+            container.innerHTML = requestArray.map(req => {
+                const typeEmoji = {
+                    'ambulance': '🚑',
+                    'fire': '🚒',
+                    'police': '🚓'
+                }[req.request_type] || '🆘';
+                
+                const showActions = req.status === 'pending' && !req.myResponse;
+                const lat = req.location.latitude;
+                const lng = req.location.longitude;
+                const address = req.location.address || 'Address not available';
+                
+                return `
+                    <div class="request-card ${req.status}">
+                        <div class="request-header">
+                            <span class="request-type">${typeEmoji} ${req.request_type.toUpperCase()}</span>
+                            <span class="request-status ${req.status}">${req.status}</span>
+                        </div>
+                        
+                        <div class="request-details">
+                            <p><strong>Request ID:</strong> ${req.request_id}</p>
+                            ${req.user_phone ? `<p><strong>📞 Phone:</strong> ${req.user_phone}</p>` : ''}
+                            ${req.user_note ? `<p><strong>📝 Note:</strong> ${req.user_note}</p>` : ''}
+                        </div>
+                        
+                        <div class="location-box">
+                            <div class="label">📍 USER LOCATION</div>
+                            <div class="coords">
+                                Lat: ${lat.toFixed(6)} | Lng: ${lng.toFixed(6)}
+                            </div>
+                            <div class="address">${address}</div>
+                        </div>
+                        
+                        <div class="request-details">
+                            <p><strong>⏰ Time:</strong> ${new Date(req.created_at).toLocaleString()}</p>
+                            ${req.message ? `<p><strong>ℹ️ Info:</strong> ${req.message}</p>` : ''}
+                        </div>
+                        
+                        ${showActions ? `
+                            <div class="request-actions">
+                                <button class="btn-action btn-accept" onclick="respondToRequest('${req.request_id}', 'accepted')">
+                                    ✓ Accept
+                                </button>
+                                <button class="btn-action btn-refuse" onclick="respondToRequest('${req.request_id}', 'rejected')">
+                                    ✗ Refuse
+                                </button>
+                            </div>
+                        ` : ''}
+                        ${req.myResponse === 'accepted' && req.status === 'pending' ? `
+                            <p style="text-align:center;color:#666;font-size:0.85em;margin-top:10px;">
+                                ⏳ Waiting for assignment...
+                            </p>
+                        ` : ''}
+                    </div>
+                `;
+            }).join('');
+        }
+        
+        // Respond to request
+        async function respondToRequest(requestId, responseType) {
+            try {
+                const response = await fetch(`${API_URL}/api/requests/respond`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({
+                        request_id: requestId,
+                        response_type: responseType,
+                        estimated_time_minutes: 15
+                    })
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Response failed');
+                }
+                
+                // Update local state
+                if (requests[requestId]) {
+                    requests[requestId].myResponse = responseType;
+                    
+                    if (responseType === 'rejected') {
+                        requests[requestId].status = 'refused';
+                    }
+                }
+                
+                renderRequests();
+                
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+        
+        // Load pending requests on startup
+        async function loadPendingRequests() {
+            try {
+                const response = await fetch(`${API_URL}/api/requests/pending/by-type/${serviceType}`);
+                const data = await response.json();
+                
+                data.requests.forEach(req => {
+                    requests[req.request_id] = {
+                        ...req,
+                        location: {
+                            latitude: req.latitude,
+                            longitude: req.longitude,
+                            address: req.address || 'Address not available'
+                        },
+                        status: 'pending',
+                        myResponse: null
+                    };
+                    
+                    addRequestMarker(requests[req.request_id]);
+                });
+                
+                renderRequests();
+                
+            } catch (error) {
+                console.error('Error loading requests:', error);
+            }
+        }
+        
+        // Logout
+        function logout() {
+            localStorage.clear();
+            window.location.href = 'login.html';
+        }
+        
+        // Initialize
+        initMap();
+        connectWebSocket();
+        loadPendingRequests();
+    </script>
+</body>
+</html>
