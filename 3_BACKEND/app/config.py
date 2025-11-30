@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     
     # CORS settings
-    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:8080"
+    CORS_ORIGINS: str = "*"
     
     # WebSocket settings
     WEBSOCKET_PING_INTERVAL: int = 25

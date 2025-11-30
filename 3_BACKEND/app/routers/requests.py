@@ -19,10 +19,16 @@ from app.database.mongodb import mongodb
 from app.websocket.manager import manager
 from app.services.distance_calculator import calculate_distance_and_eta
 from app.auth.jwt_handler import verify_token
+import asyncio
+
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/requests", tags=["Emergency Requests"])
+# Global locks to prevent multiple responders from accepting the same request
+request_locks = {}
+request_locks_lock = asyncio.Lock()
+
 
 
 # ==========================================
@@ -175,163 +181,236 @@ async def respond_to_request(
     authorization: str = Header(None)
 ):
     """
-    Service provider responds to an emergency request (LOGIN REQUIRED)
-    
-    - **request_id**: The request to respond to
-    - **response_type**: accepted or rejected
-    - **estimated_time_minutes**: ETA if accepting
-    - **notes**: Optional notes
+    Service provider responds to an emergency request
+    FIFO logic + 2-second simultaneous accept window + nearest-service winner
     """
-    # Authenticate service
+
+    # ------------------------------------------------------
+    # 1. Authenticate service (from your existing function)
+    # ------------------------------------------------------
     service = get_service_from_token(authorization)
-    
-    # Get request
-    request = db.get_request_by_id(response.request_id)
-    if not request:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Request not found"
+
+    # ------------------------------------------------------
+    # 2. Create lock for this request
+    # ------------------------------------------------------
+    async with request_locks_lock:
+        if response.request_id not in request_locks:
+            request_locks[response.request_id] = asyncio.Lock()
+
+    # ------------------------------------------------------
+    # 3. FIFO: process ONE service at a time per request
+    # ------------------------------------------------------
+    async with request_locks[response.request_id]:
+
+        # --------------------------------------------------
+        # Fetch request
+        # --------------------------------------------------
+        req = db.get_request_by_id(response.request_id)
+        if not req:
+            raise HTTPException(
+                status_code=404,
+                detail="Request not found"
+            )
+
+        # If already assigned or canceled → notify service
+        if req["status"] in ["accepted", "canceled"]:
+            await manager.notify_service(
+                service_id=service["service_id"],
+                event="request_unavailable",
+                data={
+                    "request_id": response.request_id,
+                    "reason": f"Request already {req['status']}",
+                    "assigned_to": req.get("assigned_service_id")
+                }
+            )
+            return {
+                "success": False,
+                "message": f"Request already {req['status']}",
+                "status": req["status"]
+            }
+
+        # --------------------------------------------------
+        # Handle REFUSE
+        # --------------------------------------------------
+        if response.response_type == "rejected":
+            db.record_service_response({
+                "request_id": response.request_id,
+                "service_id": service["service_id"],
+                "response_type": "rejected"
+            })
+
+            # Check if all refused
+            if db.count_refusals(response.request_id) == db.count_available_services(req["request_type"]):
+                db.update_request_status(response.request_id, "canceled")
+
+                # Notify user
+                await manager.notify_user(
+                    user_id=f"USER-{response.request_id}",
+                    event="request_canceled",
+                    data={"reason": "All services refused your request"}
+                )
+
+            return {
+                "success": True,
+                "response_type": "rejected"
+            }
+
+        # --------------------------------------------------
+        # ACCEPT LOGIC
+        # --------------------------------------------------
+
+        # Calculate distance
+        distance_km, eta_minutes = await calculate_distance_and_eta(
+            service["latitude"],
+            service["longitude"],
+            float(req["latitude"]),
+            float(req["longitude"])
         )
-    
-    # Check if request is still pending
-    if request['status'] != 'pending':
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Request is already {request['status']}"
-        )
-    
-    # Calculate distance
-    distance_km, eta_minutes = calculate_distance_and_eta(
-        service['latitude'],
-        service['longitude'],
-        float(request['latitude']),
-        float(request['longitude'])
-    )
-    
-    # Use provided ETA if given, otherwise use calculated
-    if response.estimated_time_minutes:
-        eta_minutes = response.estimated_time_minutes
-    
-    # Record response
-    response_data = {
-        'request_id': response.request_id,
-        'service_id': service['service_id'],
-        'response_type': response.response_type,
-        'distance_km': distance_km,
-        'estimated_time_minutes': eta_minutes,
-        'notes': response.notes
-    }
-    db.record_service_response(response_data)
-    
-    # Log to MongoDB
-    mongodb.log_service_response(
-        service_id=service['service_id'],
-        request_id=response.request_id,
-        response_type=response.response_type
-    )
-    
-    if response.response_type == 'accepted':
-        # Get all accepting services
-        accepting_services = db.get_accepting_services(response.request_id)
-        
-        if len(accepting_services) == 1:
-            # Only this service accepted - assign immediately
+
+        # Save this accept
+        db.record_service_response({
+            "request_id": response.request_id,
+            "service_id": service["service_id"],
+            "response_type": "accepted",
+            "distance_km": distance_km,
+            "estimated_time_minutes": eta_minutes
+        })
+
+        # Fetch accepts in last 2 seconds
+        recent = db.get_recent_accepts(response.request_id, seconds=2)
+
+        # ----------------------------------------------------------
+        # Case 1: only this service accepted → assign immediately
+        # ----------------------------------------------------------
+        if len(recent) == 1:
             db.update_request_status(
                 request_id=response.request_id,
-                status='accepted',
-                assigned_service_id=service['id'],
+                status="accepted",
+                assigned_service_id=service["service_id"],
                 estimated_arrival_time=eta_minutes,
                 distance_km=distance_km
             )
-            
-            # Notify this service
-            await manager.notify_service(
-                service_id=service['service_id'],
-                event='request_assigned_to_you',
-                data={
-                    'request_id': response.request_id,
-                    'message': 'Request assigned to you',
-                    'distance_km': distance_km,
-                    'estimated_arrival_time': eta_minutes
-                }
-            )
-            
-            # Notify user
-            await manager.notify_user(
-                user_id=f"USER-{response.request_id}",
-                event='request_assigned',
-                data={
-                    'request_id': response.request_id,
-                    'service_name': service['service_name'],
-                    'service_phone': service['contact_phone'],
-                    'estimated_arrival_time': eta_minutes,
-                    'distance_km': distance_km
-                }
-            )
-            
-            logger.info(f"Request {response.request_id} assigned to {service['service_id']}")
-        
-        else:
-            # Multiple services accepted - find nearest
-            nearest_service = min(accepting_services, key=lambda s: s['distance_km'])
-            
-            # Assign to nearest
-            nearest_service_full = db.get_service_by_id(nearest_service['service_id'])
-            db.update_request_status(
-                request_id=response.request_id,
-                status='accepted',
-                assigned_service_id=nearest_service_full['id'],
-                estimated_arrival_time=nearest_service['estimated_time_minutes'],
-                distance_km=nearest_service['distance_km']
-            )
-            
-            # Notify assigned service
-            await manager.notify_service(
-                service_id=nearest_service['service_id'],
-                event='request_assigned_to_you',
-                data={
-                    'request_id': response.request_id,
-                    'message': 'You are the nearest service - request assigned to you',
-                    'distance_km': nearest_service['distance_km'],
-                    'estimated_arrival_time': nearest_service['estimated_time_minutes']
-                }
-            )
-            
-            # Notify other services
-            for svc in accepting_services:
-                if svc['service_id'] != nearest_service['service_id']:
-                    await manager.notify_service(
-                        service_id=svc['service_id'],
-                        event='request_assigned_to_other',
-                        data={
-                            'request_id': response.request_id,
-                            'message': 'Request assigned to closer service',
-                            'assigned_to': nearest_service['service_name']
-                        }
-                    )
-            
-            # Notify user
-            await manager.notify_user(
-                user_id=f"USER-{response.request_id}",
-                event='request_assigned',
-                data={
-                    'request_id': response.request_id,
-                    'service_name': nearest_service['service_name'],
-                    'estimated_arrival_time': nearest_service['estimated_time_minutes'],
-                    'distance_km': nearest_service['distance_km']
-                }
-            )
-            
-            logger.info(f"Request {response.request_id} assigned to nearest: {nearest_service['service_id']}")
-    
-    return {
-        'success': True,
-        'request_id': response.request_id,
-        'response_type': response.response_type,
-        'distance_km': distance_km,
-        'estimated_arrival_time': eta_minutes
-    }
 
+            await manager.notify_service(
+                service_id=service["service_id"],
+                event="request_assigned_to_you",
+                data={
+                    "request_id": response.request_id,
+                    "distance_km": distance_km,
+                    "estimated_arrival_time": eta_minutes
+                }
+            )
+
+            await manager.notify_user(
+                user_id=f"USER-{response.request_id}",
+                event="request_assigned",
+                data={
+                    "request_id": response.request_id,
+                    "service_name": service["service_name"],
+                    "service_phone": service["contact_phone"],
+                    "estimated_arrival_time": eta_minutes,
+                    "distance_km": distance_km
+                }
+            )
+
+            return {
+                "success": True,
+                "response_type": "accepted",
+                "assigned_to": service["service_id"],
+                "eta_minutes": eta_minutes
+            }
+
+        # ----------------------------------------------------------
+        # Case 2: multiple accepts in window → choose nearest
+        # ----------------------------------------------------------
+        distances = {}
+
+        for r in recent:
+            svc = db.get_service_by_id(r["service_id"])
+            d, _ = await calculate_distance_and_eta(
+                svc["latitude"], svc["longitude"],
+                float(req["latitude"]), float(req["longitude"])
+            )
+            distances[r["service_id"]] = d
+
+        nearest_service_id = min(distances, key=distances.get)
+
+        # ----------------------------------------------------------
+        # If CURRENT service is NOT nearest → canceled
+        # ----------------------------------------------------------
+        if service["service_id"] != nearest_service_id:
+            db.mark_response_canceled(response.request_id, service["service_id"])
+
+            await manager.notify_service(
+                service_id=service["service_id"],
+                event="request_canceled",
+                data={
+                    "request_id": response.request_id,
+                    "reason": "Another service was closer",
+                    "assigned_to": nearest_service_id
+                }
+            )
+
+            return {
+                "success": False,
+                "reason": "Another service was closer"
+            }
+
+        # ----------------------------------------------------------
+        # If CURRENT service IS nearest → assign and cancel others
+        # ----------------------------------------------------------
+        nearest_dist = distances[nearest_service_id]
+
+        db.update_request_status(
+            request_id=response.request_id,
+            status="accepted",
+            assigned_service_id=nearest_service_id,
+            estimated_arrival_time=eta_minutes,
+            distance_km=nearest_dist
+        )
+
+        # Notify assigned service
+        await manager.notify_service(
+            service_id=nearest_service_id,
+            event="request_assigned_to_you",
+            data={
+                "request_id": response.request_id,
+                "distance_km": nearest_dist,
+                "estimated_arrival_time": eta_minutes
+            }
+        )
+
+        # Notify user
+        await manager.notify_user(
+            user_id=f"USER-{response.request_id}",
+            event="request_assigned",
+            data={
+                "request_id": response.request_id,
+                "service_name": service["service_name"],
+                "service_phone": service["contact_phone"],
+                "estimated_arrival_time": eta_minutes,
+                "distance_km": nearest_dist
+            }
+        )
+
+        # Notify ALL other services
+        for r in recent:
+            if r["service_id"] != nearest_service_id:
+                await manager.notify_service(
+                    service_id=r["service_id"],
+                    event="request_taken",
+                    data={
+                        "request_id": response.request_id,
+                        "assigned_to": nearest_service_id
+                    }
+                )
+                db.mark_response_canceled(response.request_id, r["service_id"])
+
+        return {
+            "success": True,
+            "assigned_to": nearest_service_id,
+            "eta_minutes": eta_minutes
+        }
 
 @router.get("/pending/all")
 async def get_all_pending_requests():
@@ -349,3 +428,4 @@ async def get_pending_requests_by_type(service_type: str):
     """
     requests = db.get_pending_requests(service_type=service_type)
     return {'requests': requests, 'count': len(requests)}
+

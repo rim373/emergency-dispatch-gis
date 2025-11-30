@@ -12,7 +12,7 @@ import logging
 from datetime import datetime
 
 from app.config import settings
-from app.routers import auth, requests, services
+from app.routers import auth, requests, services, user_auth
 from app.websocket.manager import manager
 from app.database.postgis import db
 from app.database.mongodb import mongodb
@@ -106,6 +106,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 app.include_router(auth.router)
 app.include_router(requests.router)
 app.include_router(services.router)
+app.include_router(user_auth.router)
 
 
 # Health check endpoint

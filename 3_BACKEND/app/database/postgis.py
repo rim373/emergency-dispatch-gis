@@ -209,23 +209,32 @@ class PostGISDatabase:
         self, 
         request_id: str, 
         status: str,
-        assigned_service_id: Optional[int] = None,
+        assigned_service_id: Optional[str] = None,  # Changed to accept service_id (string)
         estimated_arrival_time: Optional[int] = None,
         distance_km: Optional[float] = None
     ):
         """Update emergency request status"""
         with self.get_cursor() as cursor:
+            # If assigned_service_id is provided, look up the integer ID
+            service_internal_id = None
+            if assigned_service_id:
+                cursor.execute("""
+                    SELECT id FROM service_providers WHERE service_id = %s
+                """, (assigned_service_id,))
+                result = cursor.fetchone()
+                if result:
+                    service_internal_id = result['id']
+            
             cursor.execute("""
                 UPDATE emergency_requests
                 SET status = %s,
                     assigned_service_id = COALESCE(%s, assigned_service_id),
                     estimated_arrival_time = COALESCE(%s, estimated_arrival_time),
                     distance_km = COALESCE(%s, distance_km),
-                    updated_at = CURRENT_TIMESTAMP,
-                    accepted_at = CASE WHEN %s = 'accepted' THEN CURRENT_TIMESTAMP ELSE accepted_at END
+                    updated_at = CURRENT_TIMESTAMP
                 WHERE request_id = %s
                 RETURNING id, request_id, status, assigned_service_id
-            """, (status, assigned_service_id, estimated_arrival_time, distance_km, status, request_id))
+            """, (status, service_internal_id, estimated_arrival_time, distance_km, request_id))
             return cursor.fetchone()
     
     # ==========================================
@@ -235,6 +244,11 @@ class PostGISDatabase:
     def record_service_response(self, data: Dict):
         """Record service provider response to request"""
         with self.get_cursor() as cursor:
+            # Set defaults for optional fields
+            data.setdefault('distance_km', None)
+            data.setdefault('estimated_time_minutes', None)
+            data.setdefault('notes', None)
+            
             cursor.execute("""
                 INSERT INTO service_responses (
                     request_id, service_id, response_type, distance_km,
@@ -288,7 +302,222 @@ class PostGISDatabase:
         if self.pool:
             self.pool.closeall()
             logger.info("PostgreSQL connection pool closed")
+    
+    # ==========================================
+    # FIFO Logic Functions
+    # ==========================================
+    
+    def count_refusals(self, request_id: str) -> int:
+        """Count how many services refused a request"""
+        with self.get_cursor() as cursor:
+            cursor.execute("""
+                SELECT COUNT(*) as count
+                FROM service_responses
+                WHERE request_id = (SELECT id FROM emergency_requests WHERE request_id = %s)
+                    AND response_type = 'rejected'
+            """, (request_id,))
+            result = cursor.fetchone()
+            return result['count'] if result else 0
+    
+    def count_available_services(self, request_type: str) -> int:
+        """Count available services for a request type"""
+        # Map request type to service type
+        type_map = {
+            'ambulance': 'hospital',
+            'fire': 'fire_station',
+            'police': 'police_station'
+        }
+        service_type = type_map.get(request_type, request_type)
+        
+        with self.get_cursor() as cursor:
+            cursor.execute("""
+                SELECT COUNT(*) as count
+                FROM service_providers
+                WHERE service_type = %s 
+                    AND is_online = true 
+                    AND available_units > 0
+            """, (service_type,))
+            result = cursor.fetchone()
+            return result['count'] if result else 0
+    
+    def get_recent_accepts(self, request_id: str, seconds: int = 2) -> list:
+        """Get all accepts for a request in the last N seconds"""
+        with self.get_cursor() as cursor:
+            cursor.execute("""
+                SELECT sr.service_id, sr.responded_at, sr.distance_km, sr.estimated_time_minutes,
+                       sp.service_id as svc_id
+                FROM service_responses sr
+                JOIN service_providers sp ON sr.service_id = sp.id
+                WHERE sr.request_id = (SELECT id FROM emergency_requests WHERE request_id = %s)
+                    AND sr.response_type = 'accepted'
+                    AND sr.responded_at >= NOW() - make_interval(secs => %s)
+                ORDER BY sr.responded_at ASC
+            """, (request_id, seconds))
+            
+            results = cursor.fetchall()
+            # Fix the service_id field to use the correct one
+            for r in results:
+                r['service_id'] = r['svc_id']
+            return results
+    
+    def mark_response_canceled(self, request_id: str, service_id: str):
+        """Mark a service response as canceled"""
+        with self.get_cursor() as cursor:
+            cursor.execute("""
+                UPDATE service_responses
+                SET response_type = 'canceled',
+                    responded_at = CURRENT_TIMESTAMP
+                WHERE request_id = (SELECT id FROM emergency_requests WHERE request_id = %s)
+                    AND service_id = (SELECT id FROM service_providers WHERE service_id = %s)
+            """, (request_id, service_id))
 
 
 # Create global database instance
 db = PostGISDatabase()
+
+
+# ============================================================================
+# NEW FUNCTIONS FOR FIFO LOGIC - Added Nov 2024
+# ============================================================================
+
+def get_request_responses(request_id: str):
+    """Get all responses for a request"""
+    with db.get_cursor() as cursor:
+        cursor.execute("""
+            SELECT * FROM request_responses 
+            WHERE request_id = %s
+            ORDER BY created_at ASC
+        """, (request_id,))
+        
+        return cursor.fetchall()
+
+
+def store_request_response(request_id, service_id, action, distance_km=None, eta_minutes=None):
+    """Store service response to request"""
+    with db.get_cursor() as cursor:
+        cursor.execute("""
+            INSERT INTO request_responses 
+            (request_id, service_id, action, distance_km, eta_minutes)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (request_id, service_id) 
+            DO UPDATE SET action = EXCLUDED.action, updated_at = CURRENT_TIMESTAMP
+        """, (request_id, service_id, action, distance_km, eta_minutes))
+
+
+def update_response_status(request_id, service_id, new_action):
+    """Update response action"""
+    with db.get_cursor() as cursor:
+        cursor.execute("""
+            UPDATE request_responses 
+            SET action = %s, updated_at = CURRENT_TIMESTAMP
+            WHERE request_id = %s AND service_id = %s
+        """, (new_action, request_id, service_id))
+
+
+def validate_request(request_id: str, service_id: str, estimated_arrival_time: int, distance_km: float):
+    """Mark request as validated (accepted by a service)"""
+    with db.get_cursor() as cursor:
+        cursor.execute("""
+            UPDATE emergency_requests
+            SET status = 'validated',
+                assigned_service_id = (SELECT id FROM service_providers WHERE service_id = %s),
+                estimated_arrival_time = %s,
+                distance_km = %s,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE request_id = %s
+        """, (service_id, estimated_arrival_time, distance_km, request_id))
+
+
+def cancel_request(request_id: str):
+    """Mark request as canceled"""
+    with db.get_cursor() as cursor:
+        cursor.execute("""
+            UPDATE emergency_requests
+            SET status = 'canceled',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE request_id = %s
+        """, (request_id,))
+
+
+def get_available_services(service_type: str):
+    """Get all available services of a specific type"""
+    with db.get_cursor() as cursor:
+        cursor.execute("""
+            SELECT service_id, service_name, service_type, 
+                   latitude, longitude, contact_phone, available_units
+            FROM service_providers
+            WHERE service_type = %s 
+                AND is_online = true 
+                AND available_units > 0
+            ORDER BY service_name
+        """, (service_type,))
+        
+        return cursor.fetchall()
+
+
+def count_refusals(request_id: str) -> int:
+    """Count how many services refused a request"""
+    with db.get_cursor() as cursor:
+        cursor.execute("""
+            SELECT COUNT(*) as count
+            FROM service_responses
+            WHERE request_id = (SELECT id FROM emergency_requests WHERE request_id = %s)
+                AND response_type = 'rejected'
+        """, (request_id,))
+        result = cursor.fetchone()
+        return result['count'] if result else 0
+
+
+def count_available_services(request_type: str) -> int:
+    """Count available services for a request type"""
+    # Map request type to service type
+    type_map = {
+        'ambulance': 'hospital',
+        'fire': 'fire_station',
+        'police': 'police_station'
+    }
+    service_type = type_map.get(request_type, request_type)
+    
+    with db.get_cursor() as cursor:
+        cursor.execute("""
+            SELECT COUNT(*) as count
+            FROM service_providers
+            WHERE service_type = %s 
+                AND is_online = true 
+                AND available_units > 0
+        """, (service_type,))
+        result = cursor.fetchone()
+        return result['count'] if result else 0
+
+
+def get_recent_accepts(request_id: str, seconds: int = 2) -> list:
+    """Get all accepts for a request in the last N seconds"""
+    with db.get_cursor() as cursor:
+        cursor.execute("""
+            SELECT sr.service_id, sr.responded_at, sr.distance_km, sr.estimated_time_minutes,
+                   sp.service_id as svc_id
+            FROM service_responses sr
+            JOIN service_providers sp ON sr.service_id = sp.id
+            WHERE sr.request_id = (SELECT id FROM emergency_requests WHERE request_id = %s)
+                AND sr.response_type = 'accepted'
+                AND sr.responded_at >= NOW() - INTERVAL '%s seconds'
+            ORDER BY sr.responded_at ASC
+        """, (request_id, seconds))
+        
+        results = cursor.fetchall()
+        # Fix the service_id field to use the correct one
+        for r in results:
+            r['service_id'] = r['svc_id']
+        return results
+
+
+def mark_response_canceled(request_id: str, service_id: str):
+    """Mark a service response as canceled"""
+    with db.get_cursor() as cursor:
+        cursor.execute("""
+            UPDATE service_responses
+            SET response_type = 'canceled',
+                responded_at = CURRENT_TIMESTAMP
+            WHERE request_id = (SELECT id FROM emergency_requests WHERE request_id = %s)
+                AND service_id = (SELECT id FROM service_providers WHERE service_id = %s)
+        """, (request_id, service_id))
