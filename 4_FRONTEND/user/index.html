@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Emergency Response System</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/esri-leaflet-geocoder@3.1.4/dist/esri-leaflet-geocoder.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         
@@ -27,58 +28,175 @@
             font-size: 1.5em;
         }
         
-        .connection-status {
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .username {
             font-size: 0.9em;
             padding: 5px 10px;
             border-radius: 15px;
             background: rgba(255,255,255,0.2);
         }
         
+        .btn-logout {
+            background: rgba(255,255,255,0.2);
+            border: 1px solid rgba(255,255,255,0.3);
+            color: white;
+            padding: 5px 12px;
+            border-radius: 15px;
+            cursor: pointer;
+            font-size: 0.85em;
+        }
+        
+        .btn-logout:hover {
+            background: rgba(255,255,255,0.3);
+        }
+        
         .main-container {
             display: grid;
-            grid-template-columns: 1fr 350px;
+            grid-template-columns: 300px 1fr 350px;
             height: calc(100vh - 60px);
+            gap: 0;
         }
         
-        #map {
-            width: 100%;
-            height: 100%;
-        }
-        
-        .sidebar {
-            background: white;
-            border-left: 1px solid #e0e0e0;
+        /* LEFT SIDEBAR - REQUEST STATUS */
+        .left-sidebar {
+            background: #fafafa;
+            border-right: 1px solid #e0e0e0;
             display: flex;
             flex-direction: column;
             overflow: hidden;
         }
         
-        .sidebar-section {
+        .sidebar-header {
             padding: 15px;
+            background: white;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        .sidebar-header h3 {
+            font-size: 1em;
+            color: #333;
+            font-weight: 600;
+        }
+        
+        .requests-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 15px;
+        }
+        
+        .notification-item {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            border-left: 4px solid #ff9800;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+        }
+        
+        .notification-item.validated {
+            border-left-color: #4caf50;
+        }
+        
+        .notification-item.canceled {
+            border-left-color: #f44336;
+        }
+        
+        .notification-item .status {
+            font-size: 0.75em;
+            font-weight: 700;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+            padding: 3px 8px;
+            border-radius: 4px;
+            display: inline-block;
+        }
+        
+        .notification-item .status.pending { 
+            background: #fff3e0;
+            color: #ff9800;
+        }
+        .notification-item .status.validated { 
+            background: #e8f5e9;
+            color: #4caf50;
+        }
+        .notification-item .status.canceled { 
+            background: #ffebee;
+            color: #f44336;
+        }
+        
+        .notification-item .details {
+            font-size: 0.9em;
+            color: #333;
+            line-height: 1.6;
+        }
+        
+        .notification-item .details strong {
+            color: #000;
+        }
+        
+        .notification-item .time {
+            font-size: 0.75em;
+            color: #999;
+            margin-top: 8px;
+        }
+        
+        .no-notifications {
+            text-align: center;
+            color: #999;
+            font-size: 0.9em;
+            padding: 40px 20px;
+            background: white;
+            border-radius: 8px;
+        }
+        
+        /* CENTER - MAP */
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+        
+        /* RIGHT SIDEBAR - LOCATION & ACTIONS */
+        .right-sidebar {
+            background: white;
+            border-left: 1px solid #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+        
+        .sidebar-section {
+            padding: 20px;
             border-bottom: 1px solid #e0e0e0;
         }
         
         .sidebar-section h3 {
-            font-size: 0.9em;
+            font-size: 0.85em;
             color: #666;
-            margin-bottom: 10px;
+            margin-bottom: 12px;
             text-transform: uppercase;
+            font-weight: 600;
         }
         
         .location-info {
             background: #e3f2fd;
-            padding: 10px;
+            padding: 12px;
             border-radius: 8px;
             font-size: 0.85em;
         }
         
         .location-info p {
-            margin: 3px 0;
+            margin: 4px 0;
         }
         
         .location-info.waiting {
             background: #fff3e0;
             text-align: center;
+            padding: 15px;
         }
         
         .location-info.detecting {
@@ -105,7 +223,7 @@
             cursor: pointer;
             background: #1976d2;
             color: white;
-            margin-top: 10px;
+            margin-top: 12px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -144,7 +262,7 @@
             display: flex;
             align-items: center;
             gap: 10px;
-            transition: transform 0.2s, box-shadow 0.2s;
+            transition: all 0.2s;
         }
         
         .emergency-btn:hover:not(:disabled) {
@@ -177,99 +295,47 @@
         }
         
         .form-group {
-            margin-bottom: 10px;
+            margin-bottom: 12px;
         }
         
         .form-group label {
             display: block;
             font-size: 0.85em;
             color: #666;
-            margin-bottom: 5px;
+            margin-bottom: 6px;
+            font-weight: 500;
         }
         
         .form-group input,
         .form-group textarea {
             width: 100%;
-            padding: 8px;
+            padding: 10px;
             border: 1px solid #ddd;
             border-radius: 6px;
             font-size: 0.9em;
+            font-family: inherit;
         }
         
         .form-group textarea {
             resize: vertical;
-            min-height: 60px;
+            min-height: 70px;
         }
         
-        .notifications {
-            flex: 1;
-            overflow-y: auto;
-            padding: 15px;
-        }
-        
-        .notifications h3 {
-            font-size: 0.9em;
-            color: #666;
-            margin-bottom: 10px;
-            text-transform: uppercase;
-        }
-        
-        .notification-item {
-            background: #f5f5f5;
-            padding: 12px;
-            border-radius: 8px;
-            margin-bottom: 10px;
-            border-left: 4px solid #ff9800;
-        }
-        
-        .notification-item.validated {
-            border-left-color: #4caf50;
-            background: #e8f5e9;
-        }
-        
-        .notification-item.canceled {
-            border-left-color: #f44336;
-            background: #ffebee;
-        }
-        
-        .notification-item .status {
-            font-size: 0.75em;
-            font-weight: 600;
-            text-transform: uppercase;
-            margin-bottom: 5px;
-        }
-        
-        .notification-item .status.pending { color: #ff9800; }
-        .notification-item .status.validated { color: #4caf50; }
-        .notification-item .status.canceled { color: #f44336; }
-        
-        .notification-item .details {
-            font-size: 0.85em;
-            color: #666;
-        }
-        
-        .notification-item .time {
-            font-size: 0.75em;
-            color: #999;
-            margin-top: 5px;
-        }
-        
-        .no-notifications {
-            text-align: center;
-            color: #999;
-            font-size: 0.85em;
-            padding: 20px;
+        @media (max-width: 1200px) {
+            .main-container {
+                grid-template-columns: 250px 1fr 300px;
+            }
         }
         
         @media (max-width: 768px) {
             .main-container {
                 grid-template-columns: 1fr;
-                grid-template-rows: 50vh 1fr;
+                grid-template-rows: auto 50vh auto;
             }
             
-            .sidebar {
-                border-left: none;
-                border-top: 1px solid #e0e0e0;
+            .left-sidebar, .right-sidebar {
+                border: none;
+                border-bottom: 1px solid #e0e0e0;
             }
         }
     </style>
@@ -277,13 +343,28 @@
 <body>
     <div class="header">
         <h1>🚨 Emergency Response</h1>
-        <span class="connection-status" id="connectionStatus">Connecting...</span>
+        <div class="user-info">
+            <span class="username" id="connectionStatus">Connecting...</span>
+            <button onclick="logout()" class="btn-logout">Logout</button>
+        </div>
     </div>
     
     <div class="main-container">
+        <!-- LEFT SIDEBAR: REQUEST STATUS -->
+        <div class="left-sidebar">
+            <div class="sidebar-header">
+                <h3>📋 Request Status</h3>
+            </div>
+            <div class="requests-container" id="notificationsList">
+                <p class="no-notifications">No active requests</p>
+            </div>
+        </div>
+        
+        <!-- CENTER: MAP -->
         <div id="map"></div>
         
-        <div class="sidebar">
+        <!-- RIGHT SIDEBAR: LOCATION & ACTIONS -->
+        <div class="right-sidebar">
             <!-- Location Info -->
             <div class="sidebar-section">
                 <h3>📍 Your Location</h3>
@@ -302,7 +383,7 @@
                 <h3>🆘 Request Help</h3>
                 <div class="form-group">
                     <label>Phone (optional)</label>
-                    <input type="tel" id="userPhone" placeholder="+216 XX XXX XXX">
+                    <input type="tel" id="userPhone" placeholder="+852 XXXX XXXX">
                 </div>
                 <div class="form-group">
                     <label>Description (optional)</label>
@@ -323,36 +404,75 @@
                     </button>
                 </div>
             </div>
-            
-            <!-- Notifications -->
-            <div class="notifications">
-                <h3>📋 Request Status</h3>
-                <div id="notificationsList">
-                    <p class="no-notifications">No active requests</p>
-                </div>
-            </div>
         </div>
     </div>
     
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/esri-leaflet@3.0.12/dist/esri-leaflet.js"></script>
+    <script src="https://unpkg.com/esri-leaflet-vector@4.2.5/dist/esri-leaflet-vector.js"></script>
+    <script src="https://unpkg.com/esri-leaflet-geocoder@3.1.4/dist/esri-leaflet-geocoder.js"></script>
     <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
     <script>
         const API_URL = 'http://localhost:8000';
         const WS_URL = 'http://localhost:8000';
+        
+        // Check if user is logged in
+        const userToken = localStorage.getItem('userToken');
+        if (!userToken) {
+            window.location.href = 'login.html';
+        }
+        
+        // Show user info in header
+        const userName = localStorage.getItem('userName') || localStorage.getItem('userEmail') || 'User';
+        document.getElementById('connectionStatus').textContent = `👤 ${userName}`;
         
         let map, userMarker, userLocation = null;
         let serviceMarkers = [];
         let socket;
         let notifications = [];
         
-        // Initialize map
+        // Logout function
+        function logout() {
+            if (confirm('Are you sure you want to logout?')) {
+                localStorage.removeItem('userToken');
+                localStorage.removeItem('userId');
+                localStorage.removeItem('userEmail');
+                localStorage.removeItem('userName');
+                window.location.href = 'login.html';
+            }
+        }
+        
+        // Initialize map centered on Hong Kong
         function initMap() {
-            // Default to Tunis, Tunisia
-            map = L.map('map').setView([36.8065, 10.1815], 12);
+            map = L.map('map').setView([22.3193, 114.1694], 11);
             
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '© OpenStreetMap'
+            // ✅ ArcGIS Basemap (No API key needed!)
+            L.esri.basemapLayer('Streets').addTo(map);
+            
+            // Add layer control to switch basemaps
+            const basemaps = {
+                'Streets': L.esri.basemapLayer('Streets'),
+                'Topographic': L.esri.basemapLayer('Topographic'),
+                'Satellite': L.esri.basemapLayer('Imagery'),
+                'Dark Gray': L.esri.basemapLayer('DarkGray')
+            };
+            
+            L.control.layers(basemaps, null, { position: 'topright' }).addTo(map);
+            
+            // Add search control (ArcGIS Geocoding)
+            const searchControl = L.esri.Geocoding.geosearch({
+                position: 'topright',
+                placeholder: 'Search for address...',
+                useMapBounds: false
             }).addTo(map);
+            
+            // When user searches for an address
+            searchControl.on('results', function(data) {
+                if (data.results && data.results.length > 0) {
+                    const result = data.results[0];
+                    setUserLocation(result.latlng.lat, result.latlng.lng, 'search');
+                }
+            });
             
             // Allow clicking on map to set location
             map.on('click', function(e) {
@@ -361,8 +481,9 @@
             
             // Load all services
             loadServices();
+            
+            console.log('✅ Map initialized with ArcGIS basemap');
         }
-        
         // Request location permission (button click)
         function requestLocation() {
             const locationInfo = document.getElementById('locationInfo');
@@ -454,7 +575,7 @@
             
             userMarker.bindPopup('<strong>Your Location</strong><br>' + address.substring(0, 100)).openPopup();
             
-            map.setView([lat, lng], 15);
+            map.setView([lat, lng], 14);
             
             // Update location info display
             const sourceText = source === 'auto' ? '✅ Location detected' : '✅ Location set from map';
@@ -463,7 +584,7 @@
                 <p><strong>${sourceText}</strong></p>
                 <p><strong>Lat:</strong> ${lat.toFixed(6)}</p>
                 <p><strong>Lng:</strong> ${lng.toFixed(6)}</p>
-                <p><strong>Address:</strong> ${address.substring(0, 80)}${address.length > 80 ? '...' : ''}</p>
+                <p><strong>Address:</strong> ${address.substring(0, 60)}${address.length > 60 ? '...' : ''}</p>
             `;
             
             // Update button
@@ -476,11 +597,13 @@
             document.getElementById('btnPolice').disabled = false;
         }
         
-        // Load all services
+        // Load all services with CLEAN icons
         async function loadServices() {
             try {
-                const response = await fetch(`${API_URL}/api/services?limit=50`);
+                const response = await fetch(`${API_URL}/api/services?limit=200`);
                 const services = await response.json();
+                
+                console.log(`✅ Loaded ${services.length} services`);
                 
                 // Clear existing markers
                 serviceMarkers.forEach(m => map.removeLayer(m));
@@ -488,38 +611,39 @@
                 
                 // Add markers for each service
                 services.forEach(service => {
-                    const iconColor = {
-                        'hospital': '#f44336',
-                        'fire_station': '#ff9800',
-                        'police_station': '#2196f3'
-                    }[service.service_type] || '#666';
-                    
-                    const iconEmoji = {
-                        'hospital': '🏥',
-                        'fire_station': '🚒',
-                        'police_station': '🚓'
-                    }[service.service_type] || '📍';
+                    const iconConfig = {
+                        'hospital': { color: '#e53935', emoji: '🏥' },
+                        'fire_station': { color: '#fb8c00', emoji: '🚒' },
+                        'police_station': { color: '#1e88e5', emoji: '🚓' }
+                    }[service.service_type] || { color: '#666', emoji: '📍' };
                     
                     const marker = L.marker([service.latitude, service.longitude], {
                         icon: L.divIcon({
                             className: 'service-marker',
-                            html: `<div style="background:${iconColor};padding:5px;border-radius:5px;color:white;font-size:12px;white-space:nowrap;">${iconEmoji} ${service.service_name.substring(0, 15)}</div>`,
-                            iconAnchor: [0, 0]
+                            html: `<div style="background:${iconConfig.color};width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;box-shadow:0 2px 6px rgba(0,0,0,0.3);border:2px solid white;">${iconConfig.emoji}</div>`,
+                            iconSize: [26, 26],
+                            iconAnchor: [13, 13],
+                            popupAnchor: [0, -13]
                         })
                     }).addTo(map);
                     
                     marker.bindPopup(`
-                        <strong>${service.service_name}</strong><br>
-                        Type: ${service.service_type.replace('_', ' ')}<br>
-                        Phone: ${service.contact_phone || 'N/A'}<br>
-                        Units: ${service.available_units}
+                        <div style="min-width:220px;">
+                            <h3 style="margin:0 0 10px 0;color:#333;font-size:15px;font-weight:600;">${iconConfig.emoji} ${service.service_name}</h3>
+                            <p style="margin:5px 0;color:#666;font-size:13px;"><strong>Type:</strong> ${service.service_type.replace('_', ' ').toUpperCase()}</p>
+                            ${service.contact_phone ? `<p style="margin:5px 0;color:#666;font-size:13px;"><strong>Phone:</strong> ${service.contact_phone}</p>` : ''}
+                            ${service.address ? `<p style="margin:5px 0;color:#666;font-size:13px;"><strong>Address:</strong> ${service.address.substring(0, 50)}...</p>` : ''}
+                            <p style="margin:5px 0;color:#666;font-size:13px;"><strong>Available Units:</strong> ${service.available_units}</p>
+                        </div>
                     `);
                     
                     serviceMarkers.push(marker);
                 });
                 
+                console.log(`✅ Added ${serviceMarkers.length} markers to map`);
+                
             } catch (error) {
-                console.error('Error loading services:', error);
+                console.error('❌ Error loading services:', error);
             }
         }
         
@@ -601,7 +725,7 @@
                 <div class="notification-item ${n.status}">
                     <div class="status ${n.status}">${n.status}</div>
                     <div class="details">
-                        <strong>${n.type.toUpperCase()}</strong> - ${n.id}
+                        <strong>${n.type.toUpperCase()}</strong> - ${n.id.substring(0, 12)}...
                         ${n.service ? `<br>Service: ${n.service}` : ''}
                         ${n.eta ? `<br>ETA: ${n.eta} min` : ''}
                         ${n.distance ? `<br>Distance: ${n.distance} km` : ''}
@@ -616,13 +740,11 @@
             socket = io(WS_URL);
             
             socket.on('connect', () => {
-                document.getElementById('connectionStatus').textContent = '🟢 Connected';
-                document.getElementById('connectionStatus').style.background = 'rgba(76,175,80,0.3)';
+                console.log('WebSocket connected');
             });
             
             socket.on('disconnect', () => {
-                document.getElementById('connectionStatus').textContent = '🔴 Disconnected';
-                document.getElementById('connectionStatus').style.background = 'rgba(244,67,54,0.3)';
+                console.log('WebSocket disconnected');
             });
             
             socket.on('request_assigned', (data) => {

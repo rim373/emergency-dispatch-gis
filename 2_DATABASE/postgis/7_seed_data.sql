@@ -53,15 +53,4 @@ SELECT 'Emergency Requests:', COUNT(*) FROM emergency_requests;
 
 \echo ''
 \echo '✅ Seed data inserted successfully!'
-\echo ''
-\echo '📊 Test Data Summary:'
-\echo '  - 5 Hospitals'
-\echo '  - 4 Fire Stations'
-\echo '  - 4 Police Stations'
-\echo '  - 3 Sample Emergency Requests'
-\echo ''
-\echo '🔐 Login credentials for testing:'
-\echo '  Email: admin@csmc.edu (or any other email above)'
-\echo '  Password: password123'
-\echo ''
-\echo 'Next: Run test_postgis.sql to verify everything works'
+

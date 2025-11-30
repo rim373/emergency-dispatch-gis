@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Service Dashboard - Emergency Response</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/esri-leaflet-geocoder@3.1.4/dist/esri-leaflet-geocoder.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         
@@ -66,17 +67,155 @@
             background: #f5f5f5;
         }
         
+        /* 3-COLUMN LAYOUT: LEFT (ACCEPTED) + CENTER (MAP) + RIGHT (PENDING) */
         .main-container {
             display: grid;
-            grid-template-columns: 1fr 450px;
+            grid-template-columns:  1fr 450px;
             height: calc(100vh - 60px);
+            gap: 0;
         }
         
+        /* LEFT SIDEBAR - MY ACCEPTED REQUESTS */
+        .left-sidebar {
+            background: #fafafa;
+            border-right: 1px solid #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        .sidebar-header {
+            padding: 15px;
+            background: white;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        .sidebar-header h3 {
+            font-size: 1em;
+            color: #333;
+            font-weight: 600;
+        }
+        
+        .accepted-requests-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 15px;
+        }
+        
+        /* REQUEST ITEM - SAME STYLE AS USER NOTIFICATIONS */
+        .notification-item {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            border-left: 4px solid #4caf50;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .notification-item:hover {
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+            transform: translateY(-2px);
+        }
+        
+        .notification-item.selected {
+            background: #e3f2fd;
+            border-left-color: #2196f3;
+        }
+        
+        .notification-item.completed {
+            border-left-color: #9e9e9e;
+            opacity: 0.8;
+        }
+        
+        .notification-item .status {
+            font-size: 0.75em;
+            font-weight: 700;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+            padding: 3px 8px;
+            border-radius: 4px;
+            display: inline-block;
+        }
+        
+        .notification-item .status.accepted { 
+            background: #e8f5e9;
+            color: #4caf50;
+        }
+        
+        .notification-item .status.completed { 
+            background: #f5f5f5;
+            color: #757575;
+        }
+        
+        .notification-item .details {
+            font-size: 0.9em;
+            color: #333;
+            line-height: 1.6;
+        }
+        
+        .notification-item .details strong {
+            color: #000;
+        }
+        
+        .notification-item .time {
+            font-size: 0.75em;
+            color: #999;
+            margin-top: 8px;
+        }
+        
+        .notification-item .actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+        }
+        
+        .notification-item .btn {
+            flex: 1;
+            padding: 8px;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.85em;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .notification-item .btn.view {
+            background: #2196f3;
+            color: white;
+        }
+        
+        .notification-item .btn.view:hover {
+            background: #1976d2;
+        }
+        
+        .notification-item .btn.complete {
+            background: #4caf50;
+            color: white;
+        }
+        
+        .notification-item .btn.complete:hover {
+            background: #388e3c;
+        }
+        
+        .no-notifications {
+            text-align: center;
+            color: #999;
+            font-size: 0.9em;
+            padding: 40px 20px;
+            background: white;
+            border-radius: 8px;
+        }
+        
+        /* CENTER - MAP */
         #map {
             width: 100%;
             height: 100%;
         }
         
+        /* RIGHT SIDEBAR - PENDING REQUESTS */
         .sidebar {
             background: white;
             border-left: 1px solid #e0e0e0;
@@ -271,12 +410,24 @@
             margin-bottom: 10px;
         }
         
+        @media (max-width: 1200px) {
+            .main-container {
+                grid-template-columns: 250px 1fr 350px;
+            }
+        }
+        
         @media (max-width: 900px) {
             .main-container {
                 grid-template-columns: 1fr;
-                grid-template-rows: 40vh 1fr;
+                grid-template-rows: auto 40vh auto;
+            }
+            
+            .left-sidebar, .sidebar {
+                border: none;
+                border-bottom: 1px solid #e0e0e0;
             }
         }
+        
     </style>
 </head>
 <body>
@@ -290,8 +441,11 @@
     </div>
     
     <div class="main-container">
+        
+        <!-- CENTER: MAP WITH ARCGIS -->
         <div id="map"></div>
         
+        <!-- RIGHT SIDEBAR: PENDING REQUESTS -->
         <div class="sidebar">
             <div class="stats-bar">
                 <div class="stat-item">
@@ -309,7 +463,7 @@
             </div>
             
             <div class="requests-container">
-                <div class="section-title">📋 Emergency Requests</div>
+                <div class="section-title">🚨 Pending Requests</div>
                 <div id="requestsList">
                     <div class="no-requests">
                         <div class="icon">📭</div>
@@ -322,6 +476,8 @@
     </div>
     
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/esri-leaflet@3.0.12/dist/esri-leaflet.js"></script>
+    <script src="https://unpkg.com/esri-leaflet-geocoder@3.1.4/dist/esri-leaflet-geocoder.js"></script>
     <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
     <script>
         const API_URL = 'http://localhost:8000';
@@ -342,14 +498,169 @@
         let map, socket;
         let requests = {};
         let requestMarkers = {};
+        let myAcceptedRequests = [];
+        let selectedRequestId = null;
         
-        // Initialize map
+        // Initialize map with ArcGIS
         function initMap() {
-            map = L.map('map').setView([34.0522, -118.2437], 11);
+            map = L.map('map').setView([22.3193, 114.1694], 11);
             
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '© OpenStreetMap'
+            // ✅ ArcGIS Basemap (No API key needed!)
+            L.esri.basemapLayer('Streets').addTo(map);
+            
+            // Add layer control to switch basemaps
+            const basemaps = {
+                'Streets': L.esri.basemapLayer('Streets'),
+                'Topographic': L.esri.basemapLayer('Topographic'),
+                'Satellite': L.esri.basemapLayer('Imagery'),
+                'Dark Gray': L.esri.basemapLayer('DarkGray')
+            };
+            
+            L.control.layers(basemaps, null, { position: 'topright' }).addTo(map);
+            
+            // Add search control (ArcGIS Geocoding)
+            L.esri.Geocoding.geosearch({
+                position: 'topright',
+                placeholder: 'Search location...',
+                useMapBounds: false
             }).addTo(map);
+            
+            console.log('✅ Map initialized with ArcGIS basemap');
+        }
+        
+        // Load my accepted requests
+        async function loadMyAcceptedRequests() {
+            try {
+                const response = await fetch(`${API_URL}/api/requests/service/my-accepted-requests`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                
+                if (!response.ok) {
+                    console.log('Could not load accepted requests');
+                    return;
+                }
+                
+                const data = await response.json();
+                myAcceptedRequests = data.accepted_requests || [];
+                
+                renderMyAcceptedRequests();
+                
+                console.log(`✅ Loaded ${myAcceptedRequests.length} accepted requests`);
+                
+            } catch (error) {
+                console.error('Error loading accepted requests:', error);
+            }
+        }
+        
+        // Render my accepted requests (LEFT PANEL)
+        function renderMyAcceptedRequests() {
+            const container = document.getElementById('myAcceptedRequests');
+            
+            if (myAcceptedRequests.length === 0) {
+                container.innerHTML = '<p class="no-notifications">No accepted requests yet</p>';
+                return;
+            }
+            
+            container.innerHTML = myAcceptedRequests.map(req => `
+                <div class="notification-item ${req.status} ${selectedRequestId === req.request_id ? 'selected' : ''}" 
+                     onclick="selectRequest('${req.request_id}')">
+                    <div class="status ${req.status}">
+                        ${req.status === 'accepted' ? '🚨 Active' : '✅ Completed'}
+                    </div>
+                    <div class="details">
+                        <strong>${getTypeEmoji(req.request_type)} ${req.request_type.toUpperCase()}</strong>
+                        <br>ID: ${req.request_id.substring(0, 12)}...
+                        ${req.distance_km ? `<br>📍 ${req.distance_km.toFixed(1)} km` : ''}
+                        ${req.estimated_arrival_time ? `<br>⏱️ ${req.estimated_arrival_time} min` : ''}
+                        ${req.user_phone ? `<br>📞 ${req.user_phone}` : ''}
+                    </div>
+                    <div class="time">${formatTimeAgo(req.created_at)}</div>
+                    
+                    ${req.status === 'accepted' ? `
+                        <div class="actions">
+                            <button class="btn view" onclick="event.stopPropagation(); viewOnMap('${req.request_id}')">
+                                🗺️ View
+                            </button>
+                            <button class="btn complete" onclick="event.stopPropagation(); markAsCompleted('${req.request_id}')">
+                                ✅ Complete
+                            </button>
+                        </div>
+                    ` : ''}
+                </div>
+            `).join('');
+        }
+        
+        // Select request
+        function selectRequest(requestId) {
+            selectedRequestId = requestId;
+            renderMyAcceptedRequests();
+            viewOnMap(requestId);
+        }
+        
+        // View on map
+        function viewOnMap(requestId) {
+            const req = myAcceptedRequests.find(r => r.request_id === requestId);
+            if (!req) return;
+            
+            map.setView([req.location.latitude, req.location.longitude], 14);
+            
+            const marker = L.marker([req.location.latitude, req.location.longitude], {
+                icon: L.divIcon({
+                    className: 'request-marker',
+                    html: '<div style="background:#d32f2f;width:30px;height:30px;border-radius:50%;border:3px solid white;box-shadow:0 2px 5px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;font-size:16px;">🚨</div>',
+                    iconSize: [30, 30],
+                    iconAnchor: [15, 15]
+                })
+            }).addTo(map);
+            
+            marker.bindPopup(`
+                <div style="min-width:200px;">
+                    <h3 style="margin:0 0 8px 0;">${getTypeEmoji(req.request_type)} ${req.request_type.toUpperCase()}</h3>
+                    <p style="margin:4px 0;"><strong>ID:</strong> ${req.request_id}</p>
+                    ${req.distance_km ? `<p style="margin:4px 0;"><strong>Distance:</strong> ${req.distance_km.toFixed(1)} km</p>` : ''}
+                    ${req.user_phone ? `<p style="margin:4px 0;"><strong>Phone:</strong> ${req.user_phone}</p>` : ''}
+                    ${req.user_note ? `<p style="margin:4px 0;"><strong>Note:</strong> ${req.user_note}</p>` : ''}
+                </div>
+            `).openPopup();
+        }
+        
+        // Mark as completed
+        async function markAsCompleted(requestId) {
+            if (!confirm('Mark this request as completed?')) return;
+            
+            try {
+                const response = await fetch(`${API_URL}/api/requests/service/complete-request/${requestId}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                
+                if (!response.ok) throw new Error('Failed to mark as completed');
+                
+                alert('✅ Request marked as completed!');
+                await loadMyAcceptedRequests();
+                
+            } catch (error) {
+                alert('❌ Error: ' + error.message);
+            }
+        }
+        
+        // Helper functions
+        function getTypeEmoji(type) {
+            return {'ambulance': '🚑', 'fire': '🚒', 'police': '🚓'}[type] || '🚨';
+        }
+        
+        function formatTimeAgo(dateString) {
+            const date = new Date(dateString);
+            const seconds = Math.floor((new Date() - date) / 1000);
+            
+            if (seconds < 60) return 'Just now';
+            if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
+            if (seconds < 86400) return `${Math.floor(seconds / 3600)} hours ago`;
+            return `${Math.floor(seconds / 86400)} days ago`;
         }
         
         // Connect WebSocket
@@ -392,6 +703,9 @@
                     requests[data.request_id].message = data.message;
                     renderRequests();
                 }
+                
+                // Reload accepted requests
+                loadMyAcceptedRequests();
             });
             
             // Request assigned to another service
@@ -414,10 +728,12 @@
             const marker = L.marker([lat, lng], {
                 icon: L.divIcon({
                     className: 'request-marker',
-                    html: `<div style="background:#f44336;color:white;padding:5px 8px;border-radius:5px;font-size:11px;font-weight:bold;">🆘 ${request.request_type.toUpperCase()}</div>`,
-                    iconAnchor: [0, 0]
+                    html: `<div class="sos-marker" style="color:red;">🆘 ${request.request_type.toUpperCase()}</div>`,
+                    iconSize: [80, 40],   // taille fixe en pixels
+                    iconAnchor: [40, 20]  // centre du badge
                 })
             }).addTo(map);
+
             
             marker.bindPopup(`
                 <strong>${request.request_type.toUpperCase()}</strong><br>
@@ -432,7 +748,7 @@
             map.setView([lat, lng], 13);
         }
         
-        // Render requests list
+        // Render requests list (RIGHT PANEL - PENDING)
         function renderRequests() {
             const container = document.getElementById('requestsList');
             const requestArray = Object.values(requests);
@@ -464,12 +780,7 @@
             });
             
             container.innerHTML = requestArray.map(req => {
-                const typeEmoji = {
-                    'ambulance': '🚑',
-                    'fire': '🚒',
-                    'police': '🚓'
-                }[req.request_type] || '🆘';
-                
+                const typeEmoji = getTypeEmoji(req.request_type);
                 const showActions = req.status === 'pending' && !req.myResponse;
                 const lat = req.location.latitude;
                 const lng = req.location.longitude;
@@ -592,8 +903,14 @@
             window.location.href = 'login.html';
         }
         
+        // Auto-refresh accepted requests every 30 seconds
+        setInterval(() => {
+            loadMyAcceptedRequests();
+        }, 30000);
+        
         // Initialize
         initMap();
+        loadMyAcceptedRequests();
         connectWebSocket();
         loadPendingRequests();
     </script>

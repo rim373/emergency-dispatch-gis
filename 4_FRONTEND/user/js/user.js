@@ -86,3 +86,4 @@ function showAssignedService(data) {
 document.getElementById('newRequestBtn').addEventListener('click', () => {
     location.reload();
 });
+

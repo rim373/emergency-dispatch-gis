@@ -72,6 +72,12 @@ CREATE TABLE IF NOT EXISTS service_responses (
     UNIQUE(request_id, service_id)
 );
 
+ALTER TABLE emergency_requests 
+ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMP;
+
+CREATE INDEX IF NOT EXISTS idx_emergency_requests_accepted_at 
+ON emergency_requests(accepted_at);
+
 CREATE INDEX idx_service_responses_request ON service_responses(request_id);
 CREATE INDEX idx_service_responses_service ON service_responses(service_id);
 

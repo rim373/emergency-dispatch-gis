@@ -21,7 +21,7 @@ Thumbs.db
 .vscode/
 
 # Shell scripts and generated logs
-*.sh
+
 *.log
 
 # Frontend cache or temp files
@@ -31,9 +31,8 @@ Thumbs.db
 # Database dumps or temp files
 *.sqlite3
 *.db
-*.sql
 
-# Docs and generated summaries
-5_DOCS/*.log
-5_DOCS/*.tmp
 
+
+
+hiden/
