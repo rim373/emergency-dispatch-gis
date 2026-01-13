@@ -371,6 +371,53 @@ class PostGISDatabase:
                     AND service_id = (SELECT id FROM service_providers WHERE service_id = %s)
             """, (request_id, service_id))
 
+    def mark_response_as_reserve(self, request_id: str, service_id: str):
+        """Mark a service response as reserve/standby"""
+        with self.get_cursor() as cursor:
+            cursor.execute("""
+                UPDATE service_responses
+                SET response_type = 'reserve',
+                    notes = 'On standby - another service was closer',
+                    responded_at = CURRENT_TIMESTAMP
+                WHERE request_id = (SELECT id FROM emergency_requests WHERE request_id = %s)
+                    AND service_id = (SELECT id FROM service_providers WHERE service_id = %s)
+            """, (request_id, service_id))
+
+    def mark_services_as_reserve(self, request_id: str, service_ids: list):
+        """Mark multiple services as reserve/standby for a request"""
+        if not service_ids:
+            return
+
+        with self.get_cursor() as cursor:
+            # Update each service response to reserve status
+            for service_id in service_ids:
+                cursor.execute("""
+                    UPDATE service_responses
+                    SET response_type = 'reserve',
+                        notes = 'On standby - another service was closer',
+                        responded_at = CURRENT_TIMESTAMP
+                    WHERE request_id = (SELECT id FROM emergency_requests WHERE request_id = %s)
+                        AND service_id = (SELECT id FROM service_providers WHERE service_id = %s)
+                """, (request_id, service_id))
+
+    def get_reserve_services(self, request_id: str):
+        """Get all services on reserve for a request"""
+        with self.get_cursor() as cursor:
+            cursor.execute("""
+                SELECT
+                    sp.service_id,
+                    sp.service_name,
+                    sp.contact_phone,
+                    sr.distance_km,
+                    sr.estimated_time_minutes
+                FROM service_responses sr
+                JOIN service_providers sp ON sr.service_id = sp.id
+                WHERE sr.request_id = (SELECT id FROM emergency_requests WHERE request_id = %s)
+                    AND sr.response_type = 'reserve'
+                ORDER BY sr.distance_km ASC
+            """, (request_id,))
+            return cursor.fetchall()
+
 
 # Create global database instance
 db = PostGISDatabase()

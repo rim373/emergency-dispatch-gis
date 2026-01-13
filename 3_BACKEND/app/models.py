@@ -48,6 +48,13 @@ class TokenResponse(BaseModel):
     service_id: str
     service_name: str
     service_type: str
+    latitude: float
+    longitude: float
+
+    class Config:
+        json_encoders = {
+            Decimal: lambda v: float(v) if v is not None else None
+        }
 
 
 # ==========================================

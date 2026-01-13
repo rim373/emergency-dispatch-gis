@@ -38,7 +38,13 @@ class Settings(BaseSettings):
     # WebSocket settings
     WEBSOCKET_PING_INTERVAL: int = 25
     WEBSOCKET_PING_TIMEOUT: int = 60
-    
+
+    # MQTT settings
+    MQTT_BROKER_HOST: str = "localhost"
+    MQTT_BROKER_PORT: int = 1883
+    MQTT_WEBSOCKET_PORT: int = 9001
+    MQTT_KEEPALIVE: int = 60
+
     @property
     def postgres_dsn(self) -> str:
         """Get PostgreSQL connection string"""
@@ -61,3 +67,6 @@ class Settings(BaseSettings):
 
 # Create global settings instance
 settings = Settings()
+
+# Alias for backward compatibility
+Config = settings

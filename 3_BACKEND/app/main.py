@@ -16,6 +16,7 @@ from app.routers import auth, requests, services, user_auth
 from app.websocket.manager import manager
 from app.database.postgis import db
 from app.database.mongodb import mongodb
+from app.mqtt.mqtt_manager import mqtt_manager
 
 # Configure logging
 logging.basicConfig(
@@ -32,21 +33,30 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Starting Emergency Response System...")
     logger.info(f"📊 PostgreSQL: {settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}")
     logger.info(f"📊 MongoDB: {settings.MONGODB_HOST}:{settings.MONGODB_PORT}")
-    
+    logger.info(f"📡 MQTT Broker: {settings.MQTT_BROKER_HOST}:{settings.MQTT_BROKER_PORT}")
+
+    # Connect to MQTT broker
+    mqtt_connected = await mqtt_manager.connect()
+    if mqtt_connected:
+        logger.info("✅ MQTT broker connected")
+    else:
+        logger.warning("⚠️  MQTT broker connection failed - will retry on first use")
+
     # Log system startup
     mongodb.log_system_event(
         level="info",
         message="System starting up",
         component="main"
     )
-    
+
     yield
-    
+
     # Shutdown
     logger.info("🛑 Shutting down Emergency Response System...")
+    await mqtt_manager.disconnect()
     db.close()
     mongodb.close()
-    
+
     mongodb.log_system_event(
         level="info",
         message="System shutting down",
@@ -128,13 +138,16 @@ async def health_check():
     except Exception as e:
         logger.error(f"MongoDB health check failed: {e}")
     
-    status = "healthy" if (postgres_connected and mongodb_connected) else "degraded"
-    
+    mqtt_connected = mqtt_manager.connected
+
+    status = "healthy" if (postgres_connected and mongodb_connected and mqtt_connected) else "degraded"
+
     return {
         "status": status,
         "timestamp": datetime.now().isoformat(),
         "database_connected": postgres_connected,
         "mongodb_connected": mongodb_connected,
+        "mqtt_connected": mqtt_connected,
         "version": "1.0.0"
     }
 

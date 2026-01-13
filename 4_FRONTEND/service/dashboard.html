@@ -478,7 +478,9 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://unpkg.com/esri-leaflet@3.0.12/dist/esri-leaflet.js"></script>
     <script src="https://unpkg.com/esri-leaflet-geocoder@3.1.4/dist/esri-leaflet-geocoder.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/leaflet-polylinedecorator@1.6.0/dist/leaflet.polylineDecorator.min.js"></script>
     <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+    <script src="js/route-animation.js"></script>
     <script>
         const API_URL = 'http://localhost:8000';
         const WS_URL = 'http://localhost:8000';
@@ -500,14 +502,80 @@
         let requestMarkers = {};
         let myAcceptedRequests = [];
         let selectedRequestId = null;
-        
+        let serviceLocationMarker = null;
+
+        // Simple notification function
+        function showNotification(message, type = 'info', duration = 5000) {
+            const notification = document.createElement('div');
+            notification.style.cssText = `
+                position: fixed;
+                top: 80px;
+                right: 20px;
+                background: ${type === 'success' ? '#4caf50' : type === 'error' ? '#f44336' : type === 'warning' ? '#ff9800' : '#2196f3'};
+                color: white;
+                padding: 15px 20px;
+                border-radius: 8px;
+                box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+                z-index: 10000;
+                max-width: 400px;
+                font-size: 14px;
+                animation: slideIn 0.3s ease;
+            `;
+            notification.textContent = message;
+            document.body.appendChild(notification);
+
+            setTimeout(() => {
+                notification.style.animation = 'slideOut 0.3s ease';
+                setTimeout(() => notification.remove(), 300);
+            }, duration);
+        }
+
         // Initialize map with ArcGIS
         function initMap() {
-            map = L.map('map').setView([22.3193, 114.1694], 11);
-            
+            // Get service location from localStorage
+            const latStr = localStorage.getItem('serviceLat');
+            const lngStr = localStorage.getItem('serviceLng');
+
+            console.log('🔍 DEBUG - Raw values from localStorage:');
+            console.log('  serviceLat (raw):', latStr);
+            console.log('  serviceLng (raw):', lngStr);
+
+            // Parse to float
+            let serviceLat = parseFloat(latStr);
+            let serviceLng = parseFloat(lngStr);
+
+            // If coordinates are invalid, use DEFAULT location
+            if (!serviceLat || isNaN(serviceLat) || !serviceLng || isNaN(serviceLng)) {
+                console.warn('⚠️ Invalid coordinates, using DEFAULT location for ' + serviceName);
+
+                // Default location: Kwong Wah Hospital coordinates
+                serviceLat = 22.31428962;
+                serviceLng = 114.17210018;
+
+                // Save to localStorage
+                localStorage.setItem('serviceLat', serviceLat.toString());
+                localStorage.setItem('serviceLng', serviceLng.toString());
+
+                console.log('✅ Set default coordinates:', serviceLat, serviceLng);
+            }
+
+            console.log('🔍 DEBUG - Final service coordinates:');
+            console.log('  serviceLat:', serviceLat, '(type:', typeof serviceLat, ')');
+            console.log('  serviceLng:', serviceLng, '(type:', typeof serviceLng, ')');
+            console.log('  serviceType:', serviceType);
+            console.log('  serviceName:', serviceName);
+
+            // Center map on service location
+            const centerLat = serviceLat;
+            const centerLng = serviceLng;
+
+            console.log('🗺️ Map center:', centerLat, centerLng);
+
+            map = L.map('map').setView([centerLat, centerLng], 14);
+
             // ✅ ArcGIS Basemap (No API key needed!)
             L.esri.basemapLayer('Streets').addTo(map);
-            
+
             // Add layer control to switch basemaps
             const basemaps = {
                 'Streets': L.esri.basemapLayer('Streets'),
@@ -515,17 +583,85 @@
                 'Satellite': L.esri.basemapLayer('Imagery'),
                 'Dark Gray': L.esri.basemapLayer('DarkGray')
             };
-            
+
             L.control.layers(basemaps, null, { position: 'topright' }).addTo(map);
-            
+
             // Add search control (ArcGIS Geocoding)
             L.esri.Geocoding.geosearch({
                 position: 'topright',
                 placeholder: 'Search location...',
                 useMapBounds: false
             }).addTo(map);
-            
+
+            // Add service provider location marker
+            if (serviceLat && serviceLng && !isNaN(serviceLat) && !isNaN(serviceLng)) {
+                console.log('✅ Calling addServiceLocationMarker...');
+                addServiceLocationMarker(serviceLat, serviceLng);
+            } else {
+                console.error('❌ CANNOT ADD SERVICE MARKER!');
+                console.error('   Reason: Invalid coordinates');
+                console.error('   Solution: Logout and login again!');
+                alert('⚠️ Service location not available! Please logout and login again.');
+            }
+
             console.log('✅ Map initialized with ArcGIS basemap');
+        }
+
+        // Add service provider location marker to map
+        function addServiceLocationMarker(lat, lng) {
+            // Get service type emoji
+            const serviceEmojis = {
+                'hospital': '🏥',
+                'ambulance': '🚑',
+                'fire_station': '🚒',
+                'fire': '🚒',
+                'police_station': '🚓',
+                'police': '🚓'
+            };
+
+            const serviceColors = {
+                'hospital': '#e53935',
+                'ambulance': '#e53935',
+                'fire_station': '#fb8c00',
+                'fire': '#fb8c00',
+                'police_station': '#1e88e5',
+                'police': '#1e88e5'
+            };
+
+            const emoji = serviceEmojis[serviceType.toLowerCase()] || '📍';
+            const color = serviceColors[serviceType.toLowerCase()] || '#2196F3';
+
+            serviceLocationMarker = L.marker([lat, lng], {
+                icon: L.divIcon({
+                    className: 'service-location-marker',
+                    html: `<div style="
+                        background: ${color};
+                        width: 40px;
+                        height: 40px;
+                        border-radius: 50%;
+                        border: 4px solid white;
+                        box-shadow: 0 3px 10px rgba(0,0,0,0.4);
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        font-size: 24px;
+                    ">${emoji}</div>`,
+                    iconSize: [40, 40],
+                    iconAnchor: [20, 20]
+                }),
+                zIndexOffset: 1000
+            }).addTo(map);
+
+            serviceLocationMarker.bindPopup(`
+                <div style="min-width: 200px;">
+                    <h3 style="margin: 0 0 8px 0;">${emoji} Your Location</h3>
+                    <p style="margin: 4px 0;"><strong>Service:</strong> ${serviceName}</p>
+                    <p style="margin: 4px 0;"><strong>Type:</strong> ${serviceType}</p>
+                    <p style="margin: 4px 0;"><strong>Coordinates:</strong><br>${lat.toFixed(6)}, ${lng.toFixed(6)}</p>
+                </div>
+            `);
+
+            console.log(`✅ Service location marker added at [${lat}, ${lng}]`);
         }
         
         // Load my accepted requests
@@ -639,10 +775,10 @@
                 });
                 
                 if (!response.ok) throw new Error('Failed to mark as completed');
-                
+
                 alert('✅ Request marked as completed!');
-                await loadMyAcceptedRequests();
-                
+                // await loadMyAcceptedRequests(); // Disabled - endpoint not implemented yet
+
             } catch (error) {
                 alert('❌ Error: ' + error.message);
             }
@@ -697,15 +833,59 @@
             // Request assigned to me
             socket.on('request_assigned_to_you', (data) => {
                 console.log('Assigned to me:', data);
-                
+
                 if (requests[data.request_id]) {
+                    const requestData = requests[data.request_id];
+
                     requests[data.request_id].status = 'validated';
                     requests[data.request_id].message = data.message;
                     renderRequests();
+
+                    // Show route visualization and car animation
+                    if (typeof showRouteAndAnimate === 'function') {
+                        const serviceLat = parseFloat(localStorage.getItem('serviceLat'));
+                        const serviceLng = parseFloat(localStorage.getItem('serviceLng'));
+
+                        if (serviceLat && serviceLng && requestData.location) {
+                            // Get service color
+                            const serviceColors = {
+                                'hospital': '#e53935',
+                                'ambulance': '#e53935',
+                                'fire_station': '#fb8c00',
+                                'fire': '#fb8c00',
+                                'police_station': '#1e88e5',
+                                'police': '#1e88e5'
+                            };
+                            const routeColor = serviceColors[serviceType.toLowerCase()] || '#2196F3';
+
+                            console.log(`🗺️ Showing route from [${serviceLat}, ${serviceLng}] to [${requestData.location.latitude}, ${requestData.location.longitude}]`);
+
+                            showRouteAndAnimate({
+                                fromLat: serviceLat,
+                                fromLng: serviceLng,
+                                toLat: requestData.location.latitude,
+                                toLng: requestData.location.longitude,
+                                serviceType: serviceType,
+                                routeColor: routeColor,
+                                animationDuration: 45000, // 45 seconds animation (slower)
+                                onComplete: () => {
+                                    console.log('✅ Route animation completed for', data.request_id);
+                                }
+                            }).catch(err => {
+                                console.error('❌ Error displaying route:', err);
+                            });
+                        } else {
+                            console.warn('⚠️ Service or request location not available for route visualization');
+                            console.log('Service coords:', serviceLat, serviceLng);
+                            console.log('Request location:', requestData.location);
+                        }
+                    } else {
+                        console.error('❌ showRouteAndAnimate function not found. Is route-animation.js loaded?');
+                    }
                 }
-                
-                // Reload accepted requests
-                loadMyAcceptedRequests();
+
+                // Reload accepted requests (disabled - endpoint not implemented)
+                // loadMyAcceptedRequests();
             });
             
             // Request assigned to another service
@@ -904,13 +1084,13 @@
         }
         
         // Auto-refresh accepted requests every 30 seconds
-        setInterval(() => {
-            loadMyAcceptedRequests();
-        }, 30000);
-        
+        // setInterval(() => {
+        //     loadMyAcceptedRequests();
+        // }, 30000);
+
         // Initialize
         initMap();
-        loadMyAcceptedRequests();
+        // loadMyAcceptedRequests(); // Disabled - endpoint not implemented yet
         connectWebSocket();
         loadPendingRequests();
     </script>

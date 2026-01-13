@@ -95,7 +95,9 @@ async def register_service(data: ServiceRegisterRequest):
             token_type="bearer",
             service_id=service_id,
             service_name=data.service_name,
-            service_type=data.service_type
+            service_type=data.service_type,
+            latitude=data.latitude,
+            longitude=data.longitude
         )
     
     except HTTPException:
@@ -146,15 +148,34 @@ async def login_service(data: ServiceLoginRequest):
             'service_type': service['service_type']
         }
         access_token = create_access_token(token_data)
-        
-        logger.info(f"Service logged in: {service['service_id']}")
-        
+
+        # Get coordinates and convert Decimal to float
+        lat = service.get('latitude')
+        lng = service.get('longitude')
+
+        # Convert Decimal/None to float
+        if lat is not None:
+            lat = float(lat)
+        else:
+            logger.error(f"⚠️ Service {service['service_id']} has NULL latitude!")
+            lat = 0.0
+
+        if lng is not None:
+            lng = float(lng)
+        else:
+            logger.error(f"⚠️ Service {service['service_id']} has NULL longitude!")
+            lng = 0.0
+
+        logger.info(f"Service logged in: {service['service_id']} - Location: ({lat}, {lng})")
+
         return TokenResponse(
             access_token=access_token,
             token_type="bearer",
             service_id=service['service_id'],
             service_name=service['service_name'],
-            service_type=service['service_type']
+            service_type=service['service_type'],
+            latitude=lat,
+            longitude=lng
         )
     
     except HTTPException:
