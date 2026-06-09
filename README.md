@@ -429,7 +429,4 @@ For issues or questions:
 
 ---
 
-**Built with ❤️ for emergency response systems**
 
-Version: 1.0.0  
-Last Updated: November 2024
